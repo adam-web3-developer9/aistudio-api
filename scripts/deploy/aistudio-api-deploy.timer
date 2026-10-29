@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for completed aistudio-api main builds
+
+[Timer]
+OnBootSec=45s
+OnUnitInactiveSec=60s
+RandomizedDelaySec=5s
+Unit=aistudio-api-deploy.service
+
+[Install]
+WantedBy=timers.target

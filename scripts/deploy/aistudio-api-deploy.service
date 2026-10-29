@@ -1,0 +1,12 @@
+[Unit]
+Description=Deploy the current aistudio-api main release
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/bin/python3 /opt/aistudio-api/deploy.py poll
+TimeoutStartSec=infinity

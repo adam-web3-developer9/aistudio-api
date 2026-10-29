@@ -1,0 +1,176 @@
+name: Deploy New API production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# The server polls complete, published release bundles for the current main
+# commit. Superseded builds never publish a deployment candidate.
+concurrency:
+  group: new-api-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.repository == 'adam-web3-developer9/aistudio-api' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: '0'
+      GOWORK: 'off'
+      GIN_MODE: release
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+            tokenkit/go.sum
+
+      - name: Test H3 accounting, protocol, and recovered image behavior
+        run: |
+          go test ./model ./service ./controller ./middleware ./router ./relay ./setting/billing_setting \
+            -run 'Test(H3|ImageAsyncRequested)' -count=1 -timeout=120s
+          python3 scripts/deploy/test_deploy.py
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.4'
+
+      - name: Check frontend
+        working-directory: web
+        run: |
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun run test src/features/channels/lib/__tests__/new-api-channel.test.ts src/features/pricing/__tests__/task-price-display.test.tsx
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set image identity and executable version
+        id: image
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          version="main-${SOURCE_SHA:0:12}"
+          printf '%s\n' "$version" > VERSION
+          echo "ref=aistudio-api:sha-$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build Linux image on the runner
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ${{ steps.image.outputs.ref }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=new-api-production-amd64
+          cache-to: type=gha,mode=max,scope=new-api-production-amd64
+          provenance: false
+
+      - name: Package image and verified deployment metadata
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          VERSION: ${{ steps.image.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p deployment-bundle
+          docker save "$IMAGE_REF" | gzip -n -6 > deployment-bundle/aistudio-api-image.tar.gz
+          IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$IMAGE_REF")
+          ARTIFACT_CHECKSUM=$(sha256sum deployment-bundle/aistudio-api-image.tar.gz | cut -d ' ' -f 1)
+          [[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$ARTIFACT_CHECKSUM" =~ ^[0-9a-f]{64}$ ]]
+          export IMAGE_ID ARTIFACT_CHECKSUM
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          metadata = {
+              "commit": os.environ["SOURCE_SHA"],
+              "image_ref": os.environ["IMAGE_REF"],
+              "image_id": os.environ["IMAGE_ID"],
+              "artifact_checksum": os.environ["ARTIFACT_CHECKSUM"],
+              "version": os.environ["VERSION"],
+          }
+          Path("deployment-bundle/release.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+          PY
+          cd deployment-bundle
+          sha256sum aistudio-api-image.tar.gz release.json > SHA256SUMS
+          sha256sum --check SHA256SUMS
+
+      - name: Publish complete bundle for current main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          current_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          if [[ "$current_sha" != "$SOURCE_SHA" ]]; then
+            echo "Superseded revision $SOURCE_SHA; current main is $current_sha" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          tag="deploy-$SOURCE_SHA"
+          if tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq '.sha' 2>/dev/null); then
+            [[ "$tag_sha" == "$SOURCE_SHA" ]]
+          fi
+          if gh release view "$tag" --json isDraft,targetCommitish > "$RUNNER_TEMP/new-api-release.json" 2>/dev/null; then
+            if [[ $(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["isDraft"]).lower())' "$RUNNER_TEMP/new-api-release.json") == false ]]; then
+              target_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq '.sha')
+              [[ "$target_sha" == "$SOURCE_SHA" ]]
+              # A published commit bundle is immutable, including workflow reruns.
+              for asset in aistudio-api-image.tar.gz SHA256SUMS release.json; do
+                gh release view "$tag" --json assets --jq ".assets[] | select(.name == \"$asset\" and .size > 0) | .name" | grep -Fx "$asset"
+              done
+              echo "Complete deployment bundle already published: $tag" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            # Draft releases need not have a Git tag until publication.
+            target_sha=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["targetCommitish"])' "$RUNNER_TEMP/new-api-release.json")
+            [[ "$target_sha" == "$SOURCE_SHA" ]]
+          else
+            gh release create "$tag" --target "$SOURCE_SHA" --draft --prerelease \
+              --title "New API main-${SOURCE_SHA:0:12}" \
+              --notes "Automated deployment bundle for commit $SOURCE_SHA. The production server verifies the current main commit and all checksums before deployment."
+          fi
+          gh release upload "$tag" deployment-bundle/aistudio-api-image.tar.gz \
+            deployment-bundle/SHA256SUMS deployment-bundle/release.json --clobber
+          # Publication is the commit point: draft assets cannot be polled by
+          # the unauthenticated production server while uploads are incomplete.
+          current_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          if [[ "$current_sha" != "$SOURCE_SHA" ]]; then
+            echo "Bundle left in draft because main advanced to $current_sha" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh release edit "$tag" --draft=false --prerelease
+          echo "Published deployment bundle: $tag" >> "$GITHUB_STEP_SUMMARY"
