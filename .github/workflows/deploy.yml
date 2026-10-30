@@ -54,7 +54,7 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bun run typecheck
-          bun run test src/features/channels/lib/__tests__/new-api-channel.test.ts src/features/pricing/__tests__/task-price-display.test.tsx
+          bun run test src/features/channels/lib/__tests__/new-api-channel.test.ts src/features/pricing/__tests__/task-price-display.test.tsx src/features/pricing/__tests__/h3-api.test.tsx src/features/h3-documentation/__tests__/guide.test.tsx
 
   build:
     needs: verify

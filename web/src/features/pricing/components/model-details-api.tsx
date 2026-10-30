@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Link } from '@tanstack/react-router'
 import {
   ChevronRight,
   Gauge,
@@ -109,7 +110,7 @@ function buildChatSample(lang: Lang, ctx: SampleContext): string {
       `curl ${url} \\`,
       `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
       `  -H "Content-Type: application/json" \\`,
-      `  -d '${bodyJson.replace(/\n/g, '\n     ')}'`,
+      `  -d '${bodyJson.replaceAll('\n', '\n     ')}'`,
     ].join('\n')
   }
 
@@ -177,7 +178,7 @@ function buildAnthropicSample(lang: Lang, ctx: SampleContext): string {
       `  -H "x-api-key: $${ctx.apiKeyEnv}" \\`,
       `  -H "anthropic-version: 2023-06-01" \\`,
       `  -H "Content-Type: application/json" \\`,
-      `  -d '${body.replace(/\n/g, '\n     ')}'`,
+      `  -d '${body.replaceAll('\n', '\n     ')}'`,
     ].join('\n')
   }
   if (lang === 'python') {
@@ -249,7 +250,7 @@ function buildGeminiSample(lang: Lang, ctx: SampleContext): string {
     return [
       `curl '${url}' \\`,
       `  -H 'Content-Type: application/json' \\`,
-      `  -d '${body.replace(/\n/g, '\n     ')}'`,
+      `  -d '${body.replaceAll('\n', '\n     ')}'`,
     ].join('\n')
   }
   if (lang === 'python') {
@@ -299,7 +300,7 @@ function buildEmbeddingSample(lang: Lang, ctx: SampleContext): string {
       `curl ${url} \\`,
       `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
       `  -H "Content-Type: application/json" \\`,
-      `  -d '${body.replace(/\n/g, '\n     ')}'`,
+      `  -d '${body.replaceAll('\n', '\n     ')}'`,
     ].join('\n')
   }
   if (lang === 'python') {
@@ -365,7 +366,7 @@ function buildImageSample(lang: Lang, ctx: SampleContext): string {
       `curl ${url} \\`,
       `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
       `  -H "Content-Type: application/json" \\`,
-      `  -d '${body.replace(/\n/g, '\n     ')}'`,
+      `  -d '${body.replaceAll('\n', '\n     ')}'`,
     ].join('\n')
   }
   if (lang === 'python') {
@@ -423,6 +424,67 @@ function buildImageSample(lang: Lang, ctx: SampleContext): string {
   ].join('\n')
 }
 
+function buildVideoSample(lang: Lang, ctx: SampleContext): string {
+  const url = `${ctx.baseUrl}${ctx.endpointPath}`
+  const retrieveUrl = `${ctx.baseUrl}/v1/videos`
+  const body = JSON.stringify(
+    {
+      model: ctx.modelName,
+      prompt: 'A cinematic shot of waves rolling onto a quiet beach.',
+      seconds: '5',
+      size: ctx.modelName === 'h3' ? '1344x768' : '1280x720',
+    },
+    null,
+    2
+  )
+  if (lang === 'curl') {
+    return [
+      `curl '${url}' \\`,
+      `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
+      `  -H "Content-Type: application/json" \\`,
+      `  -H "Idempotency-Key: <UNIQUE_REQUEST_ID>" \\`,
+      `  -d '${body}'`,
+      '',
+      `curl '${retrieveUrl}/<VIDEO_ID>' \\`,
+      `  -H "Authorization: Bearer $${ctx.apiKeyEnv}"`,
+    ].join('\n')
+  }
+  if (lang === 'python') {
+    return [
+      'import os',
+      'import uuid',
+      'import requests',
+      '',
+      `headers = {"Authorization": "Bearer " + os.environ["${ctx.apiKeyEnv}"]}`,
+      'headers["Idempotency-Key"] = str(uuid.uuid4())',
+      `response = requests.post('${url}', headers=headers, json=${body}, timeout=60)`,
+      'response.raise_for_status()',
+      'video = response.json()',
+      `response = requests.get(f"${retrieveUrl}/{video['id']}", headers=headers, timeout=30)`,
+      'response.raise_for_status()',
+      'print(response.json())',
+    ].join('\n')
+  }
+  return [
+    `import { randomUUID } from 'node:crypto'`,
+    '',
+    `const headers = {`,
+    `  Authorization: \`Bearer \${process.env.${ctx.apiKeyEnv}}\`,`,
+    `  'Content-Type': 'application/json',`,
+    `  'Idempotency-Key': randomUUID(),`,
+    `}`,
+    `const response = await fetch('${url}', {`,
+    `  method: 'POST', headers,`,
+    `  body: JSON.stringify(${body}),`,
+    `})`,
+    `if (!response.ok) throw new Error(await response.text())`,
+    `const video = await response.json()`,
+    `const result = await fetch(\`${retrieveUrl}/\${video.id}\`, { headers })`,
+    `if (!result.ok) throw new Error(await result.text())`,
+    `console.log(await result.json())`,
+  ].join('\n')
+}
+
 function buildSample(
   lang: Lang,
   endpointType: string,
@@ -430,9 +492,11 @@ function buildSample(
 ): string {
   if (endpointType === 'anthropic') return buildAnthropicSample(lang, ctx)
   if (endpointType === 'gemini') return buildGeminiSample(lang, ctx)
-  if (endpointType === 'embeddings' || endpointType === 'jina-rerank')
+  if (endpointType === 'embeddings' || endpointType === 'jina-rerank') {
     return buildEmbeddingSample(lang, ctx)
+  }
   if (endpointType === 'image-generation') return buildImageSample(lang, ctx)
+  if (endpointType === 'openai-video') return buildVideoSample(lang, ctx)
   return buildChatSample(lang, ctx)
 }
 
@@ -762,12 +826,45 @@ export function ModelDetailsApi(props: {
   model: PricingModel
   endpointMap: Record<string, { path?: string; method?: string }>
 }) {
+  const { t } = useTranslation()
   return (
     <div className='space-y-6'>
+      {props.model.model_name === 'h3' && (
+        <div className='border-border/60 bg-muted/20 space-y-2 rounded-lg border p-3 text-sm'>
+          <Link
+            to='/docs/h3'
+            className='text-primary font-medium underline underline-offset-4'
+          >
+            {t('H3 API documentation')}
+          </Link>
+          <p>
+            {t(
+              'H3 is billed at $0.09 per requested video second (4–15 seconds). A 5-second video costs $0.45. Group discounts do not apply.'
+            )}
+          </p>
+          <p>
+            {t(
+              'Submit with POST /v1/videos. Keep the same Idempotency-Key when retrying the same request; use a new key for a new video.'
+            )}
+          </p>
+          <p>
+            {t(
+              'Poll GET /v1/videos/{id} until status is completed or failed, then download GET /v1/videos/{id}/content. Generation is asynchronous.'
+            )}
+          </p>
+          <p>
+            {t(
+              'For reference media, send metadata.direct_media descriptors, upload files directly to the returned upload targets, then POST receipts to /v1/videos/{id}/inputs. Do not send files through the gateway.'
+            )}
+          </p>
+        </div>
+      )}
       <CodeSamplesSection model={props.model} endpointMap={props.endpointMap} />
       <AuthSection />
       <SupportedParametersSection model={props.model} />
-      <RateLimitsSection model={props.model} />
+      {props.model.model_name !== 'h3' && (
+        <RateLimitsSection model={props.model} />
+      )}
     </div>
   )
 }
