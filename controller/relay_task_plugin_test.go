@@ -22,6 +22,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -1026,7 +1027,7 @@ func TestH3ControllerBillsRequestedSecondsWithoutTextGroupDiscount(t *testing.T)
 	oldGroups := ratio_setting.GroupRatio2JSONString()
 	t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldGroups)) })
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"h3-discounted":0.5}`))
-	for _, tc := range []struct{ seconds, quota int }{{5, 225_000}, {10, 450_000}} {
+	for _, tc := range []struct{ seconds, quota int }{{5, 250_000}, {10, 500_000}} {
 		t.Run(fmt.Sprintf("%d seconds", tc.seconds), func(t *testing.T) {
 			db, baseURL, created := setupH3ControllerBilling(t)
 			c, response := h3ControllerContext(fmt.Sprintf(`{"model":"h3","prompt":"clouds","seconds":"%d"}`, tc.seconds), baseURL, "")
@@ -1053,6 +1054,55 @@ func TestH3ControllerBillsRequestedSecondsWithoutTextGroupDiscount(t *testing.T)
 	}
 }
 
+func TestH3ControllerConfiguredPriceAndReplayFreezeOriginalCharge(t *testing.T) {
+	saved := config.GlobalConfig.ExportAllConfigs()
+	t.Cleanup(func() { require.NoError(t, config.GlobalConfig.LoadFromDB(saved)) })
+	for _, tc := range []struct {
+		name, expression string
+		price            float64
+		quota            int
+	}{
+		{"historical price", `tier("base", u("seconds") * 0.09)`, 0.09, 225_000},
+		{"administrator override", `tier("base", u("seconds") * 0.125)`, 0.125, 312_500},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			expressions, err := common.Marshal(map[string]string{"h3": tc.expression})
+			require.NoError(t, err)
+			require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+				"billing_setting.billing_expr": string(expressions),
+			}))
+			db, baseURL, created := setupH3ControllerBilling(t)
+			var taskID string
+			for attempt := 0; attempt < 2; attempt++ {
+				c, response := h3ControllerContext(`{"model":"h3","prompt":"clouds","seconds":"5"}`, baseURL, "frozen-price")
+				RelayH3Task(c)
+				require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
+				var video kitdto.OpenAIVideo
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &video))
+				if attempt == 0 {
+					taskID = video.ID
+					require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+						"billing_setting.billing_expr": `{"h3":"tier(\"base\", u(\"seconds\") * 0.10)"}`,
+					}))
+				}
+				assert.Equal(t, taskID, video.ID)
+			}
+			var task model.Task
+			var user model.User
+			var token model.Token
+			require.NoError(t, db.Where("task_id = ?", taskID).First(&task).Error)
+			require.NoError(t, db.First(&user, 801).Error)
+			require.NoError(t, db.First(&token, 801).Error)
+			assert.Equal(t, tc.quota, task.Quota)
+			assert.Equal(t, tc.expression, task.PrivateData.H3.BillingExpr)
+			assert.InDelta(t, tc.price, task.PrivateData.BillingContext.ModelPrice, 1e-12)
+			assert.Equal(t, 2_000_000-tc.quota, user.Quota)
+			assert.Equal(t, 2_000_000-tc.quota, token.RemainQuota)
+			assert.Equal(t, 1, *created)
+		})
+	}
+}
+
 func TestH3ControllerIdempotencyChargesOnceAndRejectsChangedRequest(t *testing.T) {
 	db, baseURL, created := setupH3ControllerBilling(t)
 	var firstTaskID string
@@ -1072,7 +1122,7 @@ func TestH3ControllerIdempotencyChargesOnceAndRejectsChangedRequest(t *testing.T
 	assert.Equal(t, http.StatusConflict, response.Code, response.Body.String())
 	var user model.User
 	require.NoError(t, db.First(&user, 801).Error)
-	assert.Equal(t, 1_775_000, user.Quota)
+	assert.Equal(t, 1_750_000, user.Quota)
 	assert.Equal(t, 1, user.RequestCount)
 	var count int64
 	require.NoError(t, db.Model(&model.H3TaskReservation{}).Count(&count).Error)
@@ -1218,7 +1268,7 @@ func TestH3UploadReceiptForwardsReservationAndRefreshesPublicTask(t *testing.T) 
 			}
 			var user model.User
 			require.NoError(t, db.First(&user, 801).Error)
-			assert.Equal(t, 1_775_000, user.Quota, "upload acknowledgements never charge or refund the video")
+			assert.Equal(t, 1_750_000, user.Quota, "upload acknowledgements never charge or refund the video")
 			assert.Equal(t, 1, user.RequestCount)
 		})
 	}

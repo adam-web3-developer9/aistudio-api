@@ -427,13 +427,10 @@ func updatePricing() {
 			}
 		}
 		if model == "h3" {
-			// H3 is a fixed commercial contract; generic administrator model
-			// overrides and text/group discounts do not alter its frozen charge.
+			// H3 uses its configured task expression without text/group discounts.
 			pricing.BillingMode = billing_setting.BillingModeTieredExpr
-			pricing.BillingExpr, _ = billing_setting.GetBuiltinBillingExpr(model)
-			pricing.BillingUsageSchema = map[string]jsplugin.UsageFieldSchema{
-				"seconds": {Type: "number", Unit: "second", Description: jsplugin.LocalizedText{"en": "Video generation unit price", "zh": "视频生成单价"}},
-			}
+			pricing.BillingExpr, _ = billing_setting.GetBillingExpr(model)
+			pricing.BillingUsageSchema = billing_setting.H3UsageSchema()
 			pricing.FixedGroupPrice = true
 			pricing.BillingPluginVariants = nil
 		}

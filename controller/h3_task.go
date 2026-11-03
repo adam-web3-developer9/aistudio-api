@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -17,6 +18,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
@@ -75,7 +77,12 @@ func RelayH3Task(c *gin.Context) {
 		videoProxyError(c, http.StatusBadRequest, "invalid_request_error", "H3 duration must be between 4 and 15 seconds")
 		return
 	}
-	cost, _, err := billingexpr.RunExprWithRequest(constant.H3BillingExpr, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: map[string]any{"seconds": seconds}})
+	expression, configured := billing_setting.GetBillingExpr(h3studio.ModelName)
+	if !configured {
+		videoProxyError(c, http.StatusInternalServerError, "server_error", "Invalid H3 billing configuration")
+		return
+	}
+	cost, _, err := billingexpr.RunExprWithRequest(expression, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: map[string]any{"seconds": seconds}})
 	if err != nil {
 		videoProxyError(c, http.StatusInternalServerError, "server_error", "Invalid H3 billing configuration")
 		return
@@ -97,7 +104,7 @@ func RelayH3Task(c *gin.Context) {
 	task.PrivateData.NodeName = common.NodeName
 	task.PrivateData.BillingSource = service.BillingSourceWallet
 	validatedRequest, _ := relaycommon.GetTaskRequest(c)
-	task.PrivateData.H3 = &model.H3TaskContext{RequestBody: body, BillingExpr: constant.H3BillingExpr, Seconds: int(seconds), Size: validatedRequest.Size, BaseURL: info.ChannelBaseUrl, Proxy: info.ChannelSetting.Proxy}
+	task.PrivateData.H3 = &model.H3TaskContext{RequestBody: body, BillingExpr: expression, Seconds: int(seconds), Size: validatedRequest.Size, BaseURL: info.ChannelBaseUrl, Proxy: info.ChannelSetting.Proxy}
 	task.PrivateData.BillingContext = &model.TaskBillingContext{
 		ModelPrice: pricePerSecond, GroupRatio: 1, OtherRatios: map[string]float64{"seconds": seconds},
 		OriginModelName: h3studio.ModelName, PerCallBilling: true,
@@ -123,7 +130,7 @@ func RelayH3Task(c *gin.Context) {
 		model.RecordConsumeLog(c, task.UserId, model.RecordConsumeLogParams{
 			ChannelId: task.ChannelId, ModelName: h3studio.ModelName, TokenName: c.GetString("token_name"),
 			Quota: task.Quota, TokenId: info.TokenId, Group: task.Group,
-			Content: []*common.Message{common.NewMessage("H3 video: {{seconds}} seconds at $0.09/second", map[string]any{"seconds": task.PrivateData.H3.Seconds})},
+			Content: []*common.Message{common.NewMessage("H3 video: {{seconds}} seconds at ${{price}}/second", map[string]any{"seconds": task.PrivateData.H3.Seconds, "price": strconv.FormatFloat(pricePerSecond, 'f', -1, 64)})},
 			Other:   other,
 		})
 	}

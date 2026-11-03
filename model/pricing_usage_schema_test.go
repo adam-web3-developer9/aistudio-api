@@ -144,6 +144,73 @@ func pricingByModel(pricings []Pricing) map[string]Pricing {
 	return result
 }
 
+func TestH3PricingValidatesNativeSecondsUsage(t *testing.T) {
+	for _, expression := range []string{
+		`tier("base", u("seconds") * 0.10)`,
+		`tier("base", u("seconds") * 0.125)`,
+	} {
+		require.NoError(t, ValidateModelPricing("h3", PricingValues{"billing_setting.billing_expr": expression}))
+	}
+	require.ErrorContains(t, ValidateModelPricing("h3", PricingValues{"billing_setting.billing_expr": `u("missing") * 0.10`}), "not declared")
+	require.Error(t, ValidateModelPricing("h3", PricingValues{"billing_setting.billing_expr": `tier("base", -u("seconds"))`}))
+}
+
+func TestH3NativePricingSnapshotAndPublicPriceRespectAdministratorExpression(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	require.NoError(t, DB.AutoMigrate(&Option{}))
+	saved := config.GlobalConfig.ExportAllConfigs()
+	keys := []string{"billing_setting.billing_mode", "billing_setting.billing_expr"}
+	var previousOptions []Option
+	require.NoError(t, DB.Where("key IN ?", keys).Find(&previousOptions).Error)
+	t.Cleanup(func() {
+		require.NoError(t, DB.Where("key IN ?", keys).Delete(&Option{}).Error)
+		for _, option := range previousOptions {
+			require.NoError(t, DB.Create(&option).Error)
+		}
+		require.NoError(t, config.GlobalConfig.LoadFromDB(saved))
+		InvalidatePricingCache()
+	})
+	insertPricingEndpointChannel(t, 940, constant.ChannelTypeH3Studio, dto.ChannelOtherSettings{})
+	insertPricingEndpointAbility(t, 940, "h3")
+
+	for _, tc := range []struct {
+		name, mode, expressions, expected string
+	}{
+		{"default native price", `{}`, `{}`, constant.H3BillingExpr},
+		{"administrator price with legacy mode", `{"h3":"ratio"}`, `{"h3":"tier(\"base\", u(\"seconds\") * 0.125)"}`, `tier("base", u("seconds") * 0.125)`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			options := map[string]string{keys[0]: tc.mode, keys[1]: tc.expressions}
+			for key, value := range options {
+				option := Option{Key: key, Value: value}
+				require.NoError(t, DB.Save(&option).Error)
+			}
+			require.NoError(t, config.GlobalConfig.LoadFromDB(options))
+			InvalidatePricingCache()
+
+			snapshot, err := GetModelPricingSnapshot([]string{"h3"})
+			require.NoError(t, err)
+			require.Len(t, snapshot.Entries, 1)
+			entry := snapshot.Entries[0]
+			assert.Equal(t, "h3", entry.ModelName)
+			assert.Equal(t, billing_setting.BillingModeTieredExpr, entry.Effective[keys[0]])
+			assert.Equal(t, tc.expected, entry.Effective[keys[1]])
+			assert.Equal(t, billing_setting.H3UsageSchema(), entry.UsageSchema)
+			assert.Equal(t, "number", entry.UsageSchema["seconds"].Type)
+			assert.Equal(t, "second", entry.UsageSchema["seconds"].Unit)
+
+			publicPrices := pricingByModel(GetPricing())
+			require.Contains(t, publicPrices, "h3")
+			price := publicPrices["h3"]
+			assert.Equal(t, billing_setting.BillingModeTieredExpr, price.BillingMode)
+			assert.Equal(t, tc.expected, price.BillingExpr)
+			assert.Equal(t, entry.UsageSchema, price.BillingUsageSchema)
+			assert.True(t, price.FixedGroupPrice)
+			assert.Empty(t, price.BillingPluginVariants)
+		})
+	}
+}
+
 func TestPricingUsageProfilesAndAliases(t *testing.T) {
 	resetPricingEndpointTestTables(t)
 	require.NoError(t, DB.AutoMigrate(&Option{}))

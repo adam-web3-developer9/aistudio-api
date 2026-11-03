@@ -2,8 +2,8 @@ package constant
 
 type TaskPlatform string
 
-const H3PricePerSecond = 0.09
-const H3BillingExpr = `tier("base", u("seconds") * 0.09)`
+const H3PricePerSecond = 0.10
+const H3BillingExpr = `tier("base", u("seconds") * 0.10)`
 
 const (
 	TaskPlatformSuno       TaskPlatform = "suno"

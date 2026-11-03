@@ -36,6 +36,12 @@ it('shows the full public H3 workflow and copies the exact generation request', 
     screen.getByText(/network timeout alone does not establish failure/)
   ).toBeVisible()
 
+  expect(
+    screen.getByText(
+      /fixed \$0\.10.*4 seconds costs \$0\.40.*5 seconds \$0\.50.*15 seconds \$1\.50/
+    )
+  ).toBeVisible()
+
   await user.click(screen.getAllByRole('button', { name: 'Copy code' })[0])
   const copied = await navigator.clipboard.readText()
   expect(copied).toContain('https://ai.crypto-compass-web.online')

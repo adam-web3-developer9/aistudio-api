@@ -84,10 +84,10 @@ it('shows valid H3 submission and retrieval examples in every offered language',
     expect(example).not.toContain('messages')
     expect(example).not.toContain('chat.completions')
   }
-  expect(screen.getByText(/\$0\.09.*\$0\.45/)).toBeVisible()
+  expect(screen.getByText(/\$0\.10.*\$0\.50/)).toBeVisible()
   i18next.addResourceBundle('zhCN', 'translation', zh.translation)
   await act(() => i18next.changeLanguage('zhCN'))
-  expect(screen.getByText(/按请求视频时长.*\$0\.09.*\$0\.45/)).toBeVisible()
+  expect(screen.getByText(/按请求视频时长.*\$0\.10.*\$0\.50/)).toBeVisible()
   expect(screen.getByText(/GET \/v1\/videos\/.*status/)).toBeVisible()
 })
 

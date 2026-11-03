@@ -100,7 +100,7 @@ const model: PricingModel = {
 }
 const clients: QueryClient[] = []
 
-it('keeps fixed H3 video prices at $0.09 per second in cards, lists and group details despite text discounts', () => {
+it('keeps fixed H3 video prices at $0.10 per second in cards, lists and group details despite text discounts', () => {
   vi.spyOn(api, 'get').mockResolvedValue({ data: { data: { groups: [] } } })
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -111,7 +111,7 @@ it('keeps fixed H3 video prices at $0.09 per second in cards, lists and group de
     model_name: 'h3',
     fixed_group_price: true,
     group_ratio: { default: 0.1 },
-    billing_expr: 'tier("base", u("seconds") * 0.09)',
+    billing_expr: 'tier("base", u("seconds") * 0.10)',
     billing_usage_schema: {
       seconds: {
         type: 'number',
@@ -142,12 +142,12 @@ it('keeps fixed H3 video prices at $0.09 per second in cards, lists and group de
       </div>
     </QueryClientProvider>
   )
-  expect(screen.getByTestId('h3-card')).toHaveTextContent('$0.09')
-  expect(screen.getByTestId('h3-cell')).toHaveTextContent('0.09/s')
+  expect(screen.getByTestId('h3-card')).toHaveTextContent('$0.1')
+  expect(screen.getByTestId('h3-cell')).toHaveTextContent('0.1/s')
   expect(
-    within(screen.getByTestId('h3-details')).getAllByText('$0.09')
+    within(screen.getByTestId('h3-details')).getAllByText('$0.1')
   ).toHaveLength(2)
-  expect(screen.queryByText('$0.009')).not.toBeInTheDocument()
+  expect(screen.queryByText('$0.01')).not.toBeInTheDocument()
 })
 
 it('shows nested task conditions and prices in detail and group tables without ambiguous log matches', () => {

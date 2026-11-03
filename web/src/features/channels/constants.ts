@@ -582,7 +582,7 @@ export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
 }
 
 export const CHANNEL_TYPE_WARNINGS: Record<number, string> = {
-  64: 'H3 uses model h3 at $0.09 per requested video second. Group discounts do not apply. Network interruptions keep the original task pending until its result is confirmed.',
+  64: 'H3 uses model h3 at $0.10 per requested video second. Group discounts do not apply. Network interruptions keep the original task pending until its result is confirmed.',
   3: 'For channels added after May 10, 2025, no need to remove "." from model names during deployment',
   8: 'If connecting to upstream One API or New API relay projects, use OpenAI type instead unless you know what you are doing',
   37: 'Dify channels only support chatflow and agent, and agent does not support images',

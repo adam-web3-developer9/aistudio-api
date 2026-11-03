@@ -59,7 +59,7 @@ export function H3GuideContent() {
         </p>
         <p>
           {t(
-            'H3 uses wallet credit at a fixed $0.09 per requested video second: 4 seconds costs $0.36, 5 seconds $0.45, and 15 seconds $1.35. Group discounts do not apply. These are USD platform-credit units; the recharge page shows the RMB amount payable.'
+            'H3 uses wallet credit at a fixed $0.10 per requested video second: 4 seconds costs $0.40, 5 seconds $0.50, and 15 seconds $1.50. Group discounts do not apply. These are USD platform-credit units; the recharge page shows the RMB amount payable.'
           )}
         </p>
         <p>
@@ -75,7 +75,7 @@ export function H3GuideContent() {
         </h2>
         <p>
           {t(
-            'The examples use Bash-compatible shell syntax. Replace the API key and choose a unique request ID before running. This POST starts a paid generation; the 5-second example costs $0.45 platform credit.'
+            'The examples use Bash-compatible shell syntax. Replace the API key and choose a unique request ID before running. This POST starts a paid generation; the 5-second example costs $0.50 platform credit.'
           )}
         </p>
         <CodeBlock code={h3SubmitExample} language='bash' showToolbar>

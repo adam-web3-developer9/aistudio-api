@@ -839,7 +839,7 @@ export function ModelDetailsApi(props: {
           </Link>
           <p>
             {t(
-              'H3 is billed at $0.09 per requested video second (4–15 seconds). A 5-second video costs $0.45. Group discounts do not apply.'
+              'H3 is billed at $0.10 per requested video second (4–15 seconds). A 5-second video costs $0.50. Group discounts do not apply.'
             )}
           </p>
           <p>

@@ -1,6 +1,16 @@
 package billing_setting
 
-import "github.com/QuantumNous/new-api/constant"
+import (
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
+)
+
+// H3UsageSchema describes the facts supplied by the built-in H3 adaptor.
+func H3UsageSchema() map[string]jsplugin.UsageFieldSchema {
+	return map[string]jsplugin.UsageFieldSchema{
+		"seconds": {Type: "number", Unit: "second", Description: jsplugin.LocalizedText{"en": "Video generation unit price", "zh": "视频生成单价"}},
+	}
+}
 
 // deepSeekPeak is DeepSeek's peak window: Monday to Friday, 09:00-12:00 and
 // 14:00-18:00 Beijing time. The Chinese public holidays DeepSeek bills

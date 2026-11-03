@@ -178,6 +178,9 @@ func effectiveModelPricing(values map[string]map[string]any, name string) Pricin
 		}
 	}
 	mode, _ := result["billing_setting.billing_mode"].(string)
+	if name == "h3" {
+		mode = billing_setting.BillingModeTieredExpr
+	}
 	if mode == "" {
 		_, hasPrice := result["ModelPrice"]
 		_, hasRatio := result["ModelRatio"]
@@ -271,7 +274,9 @@ func GetModelPricingSnapshot(names []string) (*ModelPricingSnapshot, error) {
 			ModelPricingDescription: ModelPricingDescription{Effective: effectiveModelPricing(values, name)}}
 		entry.CacheWriteMode = ResolveCacheWriteMode(name, configured)
 		entry.BillingDetails = ResolveLegacyBillingDetails(name, entry.Effective, configured)
-		if plugin, ok := generation.GetByModel(name); ok {
+		if name == "h3" {
+			entry.UsageSchema = billing_setting.H3UsageSchema()
+		} else if plugin, ok := generation.GetByModel(name); ok {
 			entry.UsageSchema, _ = plugin.Meta.UsageForModel(name)
 		} else if target, ok := ResolveTaskModelAlias(generation, name); ok {
 			if plugin, ok := generation.Get(target.PluginKey); ok {
@@ -424,7 +429,9 @@ func validateModelPricing(name string, values, previous PricingValues) error {
 			// shared models against each profile, so their prices must follow it.
 			unchanged := previous[key] == expression
 			var err error
-			if plugins := generation.PluginsByModel(name); len(plugins) > 0 {
+			if name == "h3" {
+				err = billing_setting.SmokeTestTaskExpr(expression, billing_setting.H3UsageSchema())
+			} else if plugins := generation.PluginsByModel(name); len(plugins) > 0 {
 				for _, plugin := range plugins {
 					_, overridden := variants[plugin.Meta.Key]
 					_, wasOverridden := previousVariants[plugin.Meta.Key]

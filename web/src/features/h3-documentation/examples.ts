@@ -32,7 +32,7 @@ export const h3ResponseExample = `{
     "billing": {
       "unit": "second",
       "requested_seconds": 5,
-      "price_per_second": 0.09,
+      "price_per_second": 0.10,
       "currency": "USD"
     }
   }

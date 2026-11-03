@@ -50,6 +50,9 @@ func init() {
 // ---------------------------------------------------------------------------
 
 func GetBillingMode(model string) string {
+	if model == "h3" {
+		return BillingModeTieredExpr
+	}
 	if mode, ok := billingSetting.BillingMode[model]; ok {
 		return mode
 	}
@@ -151,7 +154,7 @@ func GetBuiltinBillingExprCopy() map[string]string {
 func GetBillingModeCopy() map[string]string {
 	modes := lo.Assign(billingSetting.BillingMode)
 	for model := range builtinBillingExpr {
-		if _, configured := modes[model]; !configured && GetBillingMode(model) == BillingModeTieredExpr {
+		if GetBillingMode(model) == BillingModeTieredExpr {
 			modes[model] = BillingModeTieredExpr
 		}
 	}
