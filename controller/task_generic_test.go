@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -61,6 +62,114 @@ func allowPrivateTaskMediaTest(t *testing.T) {
 	system_setting.GetFetchSetting().AllowedPorts = []string{"1-65535"}
 	t.Cleanup(func() { *system_setting.GetFetchSetting() = originalFetchSetting })
 	service.InitHttpClient()
+}
+
+func TestH3VideoContentReturnsURLWithoutFetchingMedia(t *testing.T) {
+	var mediaRequests atomic.Int32
+	storage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mediaRequests.Add(1)
+		_, _ = w.Write([]byte("video bytes"))
+	}))
+	defer storage.Close()
+	signedURL := storage.URL + "/archive/video.mp4?X-Tos-Signature=test-signature"
+	for _, tc := range []struct {
+		name       string
+		resultURL  string
+		data       string
+		status     model.TaskStatus
+		userID     int
+		modelLimit bool
+		wantStatus int
+	}{
+		{"archived", signedURL, `{"result":{"storage":"tos"}}`, model.TaskStatusSuccess, 7, false, http.StatusOK},
+		{"missing URL", "", `{"result":{"storage":"tos"}}`, model.TaskStatusSuccess, 7, false, http.StatusBadGateway},
+		{"invalid URL", "/archive/video.mp4", `{"result":{"storage":"tos"}}`, model.TaskStatusSuccess, 7, false, http.StatusBadGateway},
+		{"not archived", signedURL, `{"result":{"storage":"gpu"}}`, model.TaskStatusSuccess, 7, false, http.StatusBadGateway},
+		{"missing archive data", signedURL, `{}`, model.TaskStatusSuccess, 7, false, http.StatusBadGateway},
+		{"generation failed", signedURL, `{"result":{"storage":"tos"}}`, model.TaskStatusFailure, 7, false, http.StatusBadRequest},
+		{"different owner", signedURL, `{"result":{"storage":"tos"}}`, model.TaskStatusSuccess, 8, false, http.StatusNotFound},
+		{"model forbidden", signedURL, `{"result":{"storage":"tos"}}`, model.TaskStatusSuccess, 7, true, http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := setupGenericTaskTest(t)
+			task.Platform = constant.TaskPlatformH3Studio
+			task.Status = tc.status
+			task.Properties.OriginModelName = "h3"
+			task.PrivateData.ResultURL = tc.resultURL
+			task.FailReason = signedURL // A missing archive URL must not revive this legacy fallback.
+			task.Data = []byte(tc.data)
+			require.NoError(t, model.DB.Save(task).Error)
+			response := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(response)
+			ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/"+task.TaskID+"/content", nil)
+			ctx.Request.Header.Set("Authorization", "Bearer gateway-token")
+			ctx.Set("id", tc.userID)
+			ctx.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+			if tc.modelLimit {
+				common.SetContextKey(ctx, constant.ContextKeyTokenModelLimitEnabled, true)
+				common.SetContextKey(ctx, constant.ContextKeyTokenModelLimit, map[string]bool{"other-model": true})
+			}
+			VideoProxy(ctx)
+			assert.Equal(t, tc.wantStatus, response.Code, response.Body.String())
+			if tc.wantStatus == http.StatusOK {
+				var payload map[string]string
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
+				assert.Equal(t, map[string]string{"url": signedURL}, payload)
+				assert.Equal(t, "no-referrer", response.Header().Get("Referrer-Policy"))
+			}
+			assert.Empty(t, response.Header().Get("Location"))
+			assert.Equal(t, "private, no-store", response.Header().Get("Cache-Control"))
+			assert.NotContains(t, response.Body.String(), "gateway-token")
+			assert.Zero(t, mediaRequests.Load(), "the gateway must never fetch H3 video bytes")
+		})
+	}
+}
+
+func TestH3VideoTaskPublishesArchivedResultURL(t *testing.T) {
+	const signedURL = "https://bucket.tos.example/archive/video.mp4?X-Tos-Signature=test-signature"
+	for _, tc := range []struct {
+		name      string
+		status    model.TaskStatus
+		storage   string
+		resultURL string
+		wantURL   bool
+	}{
+		{"archived", model.TaskStatusSuccess, "tos", signedURL, true},
+		{"not archived", model.TaskStatusSuccess, "gpu", signedURL, false},
+		{"missing URL", model.TaskStatusSuccess, "tos", "", false},
+		{"invalid URL", model.TaskStatusSuccess, "tos", "/archive/video.mp4", false},
+		{"failed", model.TaskStatusFailure, "tos", signedURL, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := setupGenericTaskTest(t)
+			task.Platform = constant.TaskPlatformH3Studio
+			task.Status = tc.status
+			task.Properties.OriginModelName = "h3"
+			task.PrivateData.ResultURL = tc.resultURL
+			task.PrivateData.Key = "private-operator-key"
+			task.FailReason = signedURL
+			task.SetData(map[string]any{"stage": "succeeded", "result": map[string]any{"storage": tc.storage, "expiresAt": 1793974020000}})
+			require.NoError(t, model.DB.Save(task).Error)
+			response := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(response)
+			ctx.Set("id", 7)
+			ctx.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+			ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/"+task.TaskID, nil)
+			require.True(t, relayH3TaskFetch(ctx))
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			var payload struct {
+				Metadata map[string]any `json:"metadata"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
+			if tc.wantURL {
+				assert.Equal(t, signedURL, payload.Metadata["url"])
+			} else {
+				assert.NotContains(t, payload.Metadata, "url")
+			}
+			assert.NotContains(t, response.Body.String(), "private-operator-key")
+			assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+		})
+	}
 }
 
 func TestGetTaskDoesNotProjectArtifacts(t *testing.T) {

@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/task/h3studio"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
@@ -84,6 +85,23 @@ func VideoProxy(c *gin.Context) {
 	if task.Status != model.TaskStatusSuccess {
 		videoProxyError(c, http.StatusBadRequest, "invalid_request_error",
 			fmt.Sprintf("Task is not completed yet, current status: %s", task.Status))
+		return
+	}
+	if task.Platform == constant.TaskPlatformH3Studio {
+		var job h3studio.StudioJob
+		if err := common.Unmarshal(task.Data, &job); err != nil || job.Result == nil || job.Result.Storage != "tos" {
+			videoProxyError(c, http.StatusBadGateway, "server_error", "H3 archived result is unavailable")
+			return
+		}
+		resultURL := strings.TrimSpace(task.PrivateData.ResultURL)
+		parsed, err := url.Parse(resultURL)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+			videoProxyError(c, http.StatusBadGateway, "server_error", "H3 archived result URL is unavailable")
+			return
+		}
+		// H3 results are already archived in TOS; media never traverses this gateway.
+		setTaskMediaResponseSecurityHeaders(c.Writer.Header())
+		c.JSON(http.StatusOK, gin.H{"url": resultURL})
 		return
 	}
 

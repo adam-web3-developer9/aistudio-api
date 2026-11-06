@@ -408,6 +408,11 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	}
 	if job.Result != nil && task.Status == model.TaskStatusSuccess {
 		video.ExpiresAt = job.Result.ExpiresAt / 1000
+		resultURL := strings.TrimSpace(task.PrivateData.ResultURL)
+		parsed, err := url.Parse(resultURL)
+		if job.Result.Storage == "tos" && err == nil && parsed.Host != "" && (parsed.Scheme == "https" || parsed.Scheme == "http") {
+			video.SetMetadata("url", resultURL)
+		}
 	}
 	if task.Status == model.TaskStatusFailure {
 		video.Error = &dto.OpenAIVideoError{Code: task.FailReason, Message: "H3 generation failed"}
