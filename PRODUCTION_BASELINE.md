@@ -55,6 +55,15 @@ unique reservation, frozen request, and wallet/token debit before networking.
 Uncertain transport responses remain pending for reconciliation; only confirmed
 provider failure permits an atomic, exactly-once refund.
 
+Task responses expose `metadata.stage` and controlled `metadata.progress`
+(`message`, `phase`, optional RFC 3339 `nextRetryAt` timestamp). GPU capacity,
+rental-account balance, and instance recovery waits remain distinct. Public
+messages are generated from known stages/error codes, never provider diagnostics.
+Confirmed GPU rental balance/start/create rejections retain their `COMFY_*`
+error code and return a specific safe `error.message`. A failure becomes terminal
+only when Studio explicitly supplies `providerTerminal=true`; message text alone
+does not change task settlement or permit a refund.
+
 The Studio companion protocol changes in the Hailuo checkout are required for
 short acknowledgements, requested-second billing metadata, automatic empty-media
 confirmation, and verified archive delivery. They have not been deployed by this

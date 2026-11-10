@@ -776,6 +776,8 @@ func TestH3ParseOnlyCompletesArchivedDeliveriesAndProvenFailures(t *testing.T) {
 		{"unknown remote failure", `{"id":"job1","status":"failed","error":{"code":"COMFY_REMOTE_UNCONFIRMED","providerTerminal":false}}`, model.TaskStatusInProgress, false},
 		{"unproven failure", `{"id":"job1","status":"failed","error":{"code":"UNKNOWN"}}`, model.TaskStatusInProgress, false},
 		{"proven render failure", `{"id":"job1","status":"failed","error":{"code":"COMFY_RENDER_FAILED","providerTerminal":true}}`, model.TaskStatusFailure, false},
+		{"balance rejection without terminal proof", `{"id":"job1","status":"failed","error":{"code":"COMFY_INSUFFICIENT_BALANCE","providerTerminal":false}}`, model.TaskStatusInProgress, false},
+		{"proven balance rejection", `{"id":"job1","status":"failed","error":{"code":"COMFY_INSUFFICIENT_BALANCE","providerTerminal":true}}`, model.TaskStatusFailure, false},
 		{"missing billing", `{"id":"job1","status":"succeeded","result":{"storage":"tos","videoUrl":"https://tos.example/video.mp4"}}`, "", true},
 		{"archived success", `{"id":"job1","status":"succeeded","billing":{"unit":"second","requestedSeconds":10},"result":{"storage":"tos","videoUrl":"https://tos.example/video.mp4","expiresAt":1800000000000}}`, model.TaskStatusSuccess, false},
 		{"malformed", `{"message":"rate limited"}`, "", true},
@@ -891,6 +893,105 @@ func TestH3PublicProjectionExcludesOperationalDetails(t *testing.T) {
 	assert.Contains(t, string(response), "reservation-current")
 	assert.Contains(t, string(response), "awaiting_upload")
 	assert.NotContains(t, string(response), "private-job")
+}
+
+func TestH3PublicProgressPreservesSafeWaitReasons(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		stage       string
+		message     string
+		nextRetryAt string
+	}{
+		{"billing with UTC milliseconds", "waiting_billing", "GPU rental account has insufficient balance; waiting for recharge", "2026-11-10T06:27:03.125Z"},
+		{"capacity with UTC milliseconds", "waiting_capacity", "No GPU capacity in the target region; waiting for capacity", "2026-11-10T06:27:03.000Z"},
+		{"instance with UTC offset", "waiting_instance", "Waiting for the GPU instance to recover", "2026-11-10T14:27:03+08:00"},
+		{"invalid timestamp", "waiting_capacity", "No GPU capacity in the target region; waiting for capacity", "provider-secret"},
+		{"unknown stage", "future_stage", "", "2026-11-10T06:27:03.125Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := common.Marshal(map[string]any{
+				"id": "private-job", "status": "queued", "stage": tc.stage,
+				"progress": map[string]any{"message": "provider-secret", "phase": "provider-secret", "nextRetryAt": tc.nextRetryAt, "instance": map[string]any{"id": "private-instance"}},
+			})
+			require.NoError(t, err)
+			adaptor := &h3studio.TaskAdaptor{}
+			safe, err := adaptor.SanitizeTaskData(body)
+			require.NoError(t, err)
+			assert.NotContains(t, string(safe), "provider-secret")
+			assert.NotContains(t, string(safe), "private-instance")
+			// Both newly sanitized data and previously stored data use safe text.
+			for _, data := range [][]byte{safe, body} {
+				response, err := adaptor.ConvertToOpenAIVideo(&model.Task{TaskID: "task_public", Status: model.TaskStatusQueued, Data: data})
+				require.NoError(t, err)
+				var video struct {
+					Metadata map[string]any `json:"metadata"`
+				}
+				require.NoError(t, common.Unmarshal(response, &video))
+				assert.Equal(t, tc.stage, video.Metadata["stage"])
+				if tc.message == "" {
+					assert.NotContains(t, video.Metadata, "progress")
+				} else {
+					expected := map[string]any{"message": tc.message, "phase": tc.stage}
+					if tc.nextRetryAt != "provider-secret" {
+						expected["nextRetryAt"] = tc.nextRetryAt
+					}
+					assert.Equal(t, expected, video.Metadata["progress"])
+				}
+				assert.NotContains(t, string(response), "provider-secret")
+				assert.NotContains(t, string(response), "private-instance")
+			}
+		})
+	}
+}
+
+func TestH3PublicGPURejectionsUseSafeCodeDescriptions(t *testing.T) {
+	for _, tc := range []struct {
+		code    string
+		message string
+	}{
+		{"COMFY_INSUFFICIENT_BALANCE", "GPU rental account has insufficient balance"},
+		{"COMFY_INSTANCE_START_REJECTED", "GPU instance start was rejected"},
+		{"COMFY_INSTANCE_CREATE_REJECTED", "GPU instance rental was rejected"},
+		{"COMFY_RENDER_FAILED", "H3 generation failed"},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			body, err := common.Marshal(map[string]any{
+				"id": "private-job", "status": "failed", "stage": "failed",
+				"error": map[string]any{"code": tc.code, "message": "provider-secret", "providerTerminal": true},
+			})
+			require.NoError(t, err)
+			adaptor := &h3studio.TaskAdaptor{}
+			result, err := adaptor.ParseTaskResult(nil, nil, body)
+			require.NoError(t, err)
+			require.EqualValues(t, model.TaskStatusFailure, result.Status)
+			assert.Equal(t, tc.code, result.Reason)
+			safe, err := adaptor.SanitizeTaskData(body)
+			require.NoError(t, err)
+			assert.NotContains(t, string(safe), "provider-secret")
+			for _, data := range [][]byte{safe, []byte(`{"status":"queued","stage":"waiting_capacity"}`)} {
+				response, err := adaptor.ConvertToOpenAIVideo(&model.Task{TaskID: "task_public", Status: model.TaskStatusFailure, FailReason: result.Reason, Data: data})
+				require.NoError(t, err)
+				var video struct {
+					Error struct {
+						Code    string `json:"code"`
+						Message string `json:"message"`
+					} `json:"error"`
+					Metadata struct {
+						Stage    string `json:"stage"`
+						Progress struct {
+							Message string `json:"message"`
+						} `json:"progress"`
+					} `json:"metadata"`
+				}
+				require.NoError(t, common.Unmarshal(response, &video))
+				assert.Equal(t, tc.code, video.Error.Code)
+				assert.Equal(t, tc.message, video.Error.Message)
+				assert.Equal(t, "failed", video.Metadata.Stage)
+				assert.Equal(t, tc.message, video.Metadata.Progress.Message)
+				assert.NotContains(t, string(response), "provider-secret")
+			}
+		})
+	}
 }
 
 func TestH3TaskAccessRequiresOwnerAndAllowedModel(t *testing.T) {

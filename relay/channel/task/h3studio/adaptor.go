@@ -58,10 +58,11 @@ type StudioRequest struct {
 }
 
 type StudioJob struct {
-	ID      string `json:"id,omitempty"`
-	Status  string `json:"status"`
-	Stage   string `json:"stage"`
-	Billing *struct {
+	ID       string          `json:"id,omitempty"`
+	Status   string          `json:"status"`
+	Stage    string          `json:"stage"`
+	Progress *studioProgress `json:"progress,omitempty"`
+	Billing  *struct {
 		Unit             string `json:"unit"`
 		RequestedSeconds int    `json:"requestedSeconds"`
 	} `json:"billing,omitempty"`
@@ -84,6 +85,76 @@ type StudioJob struct {
 		Message          string `json:"message"`
 		ProviderTerminal *bool  `json:"providerTerminal,omitempty"`
 	} `json:"error,omitempty"`
+}
+
+type studioProgress struct {
+	Message     string `json:"message"`
+	Phase       string `json:"phase"`
+	NextRetryAt string `json:"nextRetryAt,omitempty"`
+}
+
+func h3FailureMessage(code string) string {
+	switch code {
+	case "COMFY_INSUFFICIENT_BALANCE":
+		return "GPU rental account has insufficient balance"
+	case "COMFY_INSTANCE_START_REJECTED":
+		return "GPU instance start was rejected"
+	case "COMFY_INSTANCE_CREATE_REJECTED":
+		return "GPU instance rental was rejected"
+	default:
+		return "H3 generation failed"
+	}
+}
+
+// Public descriptions are generated from protocol stages/codes, never provider
+// messages. Run this for stored data too, so older snapshots cannot expose text.
+func (job *StudioJob) sanitizePublicProgress() {
+	if job.Error != nil {
+		job.Error.Message = h3FailureMessage(job.Error.Code)
+	}
+	message := ""
+	switch job.Stage {
+	case "queued":
+		message = "Queued, waiting for a GPU instance"
+	case "waiting_capacity":
+		message = "No GPU capacity in the target region; waiting for capacity"
+	case "waiting_billing":
+		message = "GPU rental account has insufficient balance; waiting for recharge"
+	case "waiting_instance":
+		message = "Waiting for the GPU instance to recover"
+	case "booting":
+		message = "Starting the GPU instance"
+	case "awaiting_upload":
+		message = "Waiting for reference media upload"
+	case "preparing", "submitting":
+		message = "Preparing the workflow"
+	case "running":
+		message = "Generating video"
+	case "preparing_result":
+		message = "Preparing to retrieve the generated video"
+	case "collecting", "archiving":
+		message = "Archiving the generated video"
+	case "succeeded":
+		message = "Video generation completed"
+	case "failed":
+		message = "H3 generation failed"
+		if job.Error != nil {
+			message = job.Error.Message
+		}
+	case "cancelled":
+		message = "Task cancelled"
+	}
+	if message == "" {
+		job.Progress = nil
+		return
+	}
+	nextRetryAt := ""
+	if job.Progress != nil && job.Progress.NextRetryAt != "" {
+		if _, err := time.Parse(time.RFC3339Nano, job.Progress.NextRetryAt); err == nil {
+			nextRetryAt = job.Progress.NextRetryAt
+		}
+	}
+	job.Progress = &studioProgress{Message: message, Phase: job.Stage, NextRetryAt: nextRetryAt}
 }
 
 type TaskAdaptor struct {
@@ -376,9 +447,7 @@ func (a *TaskAdaptor) SanitizeTaskData(body []byte) ([]byte, error) {
 		return nil, fmt.Errorf("invalid H3 task response")
 	}
 	job.ID = ""
-	if job.Error != nil {
-		job.Error.Message = ""
-	}
+	job.sanitizePublicProgress()
 	return common.Marshal(job)
 }
 
@@ -389,11 +458,20 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 			return nil, fmt.Errorf("invalid stored H3 task response: %w", err)
 		}
 	}
+	job.sanitizePublicProgress()
+	if task.Status == model.TaskStatusFailure {
+		// Failure settlement can retain the previous non-terminal data snapshot.
+		job.Stage = "failed"
+		job.Progress = &studioProgress{Message: h3FailureMessage(task.FailReason), Phase: "failed"}
+	}
 	video := task.ToOpenAIVideo()
 	if task.Status != model.TaskStatusFailure && task.Status != model.TaskStatusSuccess {
 		video.CompletedAt = 0
 	}
 	video.SetMetadata("stage", job.Stage)
+	if job.Progress != nil {
+		video.SetMetadata("progress", job.Progress)
+	}
 	if task.PrivateData.BillingContext != nil {
 		seconds := task.PrivateData.BillingContext.OtherRatios["seconds"]
 		if task.PrivateData.H3 != nil {
@@ -415,7 +493,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		}
 	}
 	if task.Status == model.TaskStatusFailure {
-		video.Error = &dto.OpenAIVideoError{Code: task.FailReason, Message: "H3 generation failed"}
+		video.Error = &dto.OpenAIVideoError{Code: task.FailReason, Message: h3FailureMessage(task.FailReason)}
 	}
 	return common.Marshal(video)
 }
