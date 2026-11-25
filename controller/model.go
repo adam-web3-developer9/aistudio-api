@@ -92,11 +92,12 @@ func init() {
 	}
 	openAIModelsMap = make(map[string]dto.OpenAIModels)
 	openAIModels = append(openAIModels, dto.OpenAIModels{Id: "h3", Object: "model", Created: 1626777600, OwnedBy: "Hailuo Studio"})
+	openAIModels = append(openAIModels, dto.OpenAIModels{Id: constant.StudioASRModel, Object: "model", Created: 1626777600, OwnedBy: "Hailuo Studio"})
 	for _, aiModel := range openAIModels {
 		openAIModelsMap[aiModel.Id] = aiModel
 	}
 	channelId2Models = make(map[int][]string)
-	channelId2Models[constant.ChannelTypeH3Studio] = []string{"h3"}
+	channelId2Models[constant.ChannelTypeH3Studio] = []string{"h3", constant.StudioASRModel}
 	for i := 1; i <= constant.ChannelTypeDummy; i++ {
 		apiType, success := common.ChannelType2APIType(i)
 		if !success || apiType == constant.APITypeAIProxyLibrary {

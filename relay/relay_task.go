@@ -663,6 +663,12 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 }
 
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
+	data := task.Data
+	if task.Platform == constant.TaskPlatformH3Studio && task.Properties.OriginModelName == constant.StudioASRModel {
+		// Only the authenticated speech recognition endpoint returns the
+		// scoped upload credential and private transcript.
+		data = nil
+	}
 	return &dto.TaskDto{
 		ID:         task.ID,
 		CreatedAt:  task.CreatedAt,
@@ -683,6 +689,6 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Progress:   task.Progress,
 		Properties: task.Properties,
 		Username:   task.Username,
-		Data:       task.Data,
+		Data:       data,
 	}
 }

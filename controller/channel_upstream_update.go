@@ -365,7 +365,16 @@ func getFetchModelsResponseBody(method string, requestURL string, channel *model
 
 func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 	if channel.Type == constant.ChannelTypeH3Studio {
-		return []string{"h3"}, nil
+		models := make([]string, 0, 2)
+		for _, name := range channel.GetModels() {
+			if name == "h3" || name == constant.StudioASRModel {
+				models = append(models, name)
+			}
+		}
+		if len(models) == 0 {
+			models = append(models, "h3")
+		}
+		return models, nil
 	}
 	if channel.Type == constant.ChannelTypeTaskPlugin {
 		plugin, ok := jsplugin.DefaultRegistry.Get(channel.GetSetting().TaskPluginKey)

@@ -7,18 +7,19 @@ import "github.com/QuantumNous/new-api/relaykit/types"
 type EndpointType = types.EndpointType
 
 const (
-	EndpointTypeOpenAI                = types.EndpointTypeOpenAI
-	EndpointTypeOpenAIResponse        = types.EndpointTypeOpenAIResponse
-	EndpointTypeOpenAIResponseCompact = types.EndpointTypeOpenAIResponseCompact
-	EndpointTypeOpenAIAlphaSearch     = types.EndpointTypeOpenAIAlphaSearch
-	EndpointTypeDeepSeekToolsSearch   = types.EndpointTypeDeepSeekToolsSearch
-	EndpointTypeDeepSeekToolsFetch    = types.EndpointTypeDeepSeekToolsFetch
-	EndpointTypeAnthropic             = types.EndpointTypeAnthropic
-	EndpointTypeGemini                = types.EndpointTypeGemini
-	EndpointTypeJinaRerank            = types.EndpointTypeJinaRerank
-	EndpointTypeImageGeneration       = types.EndpointTypeImageGeneration
-	EndpointTypeEmbeddings            = types.EndpointTypeEmbeddings
-	EndpointTypeOpenAIVideo           = types.EndpointTypeOpenAIVideo
+	EndpointTypeOpenAI                             = types.EndpointTypeOpenAI
+	EndpointTypeOpenAIResponse                     = types.EndpointTypeOpenAIResponse
+	EndpointTypeOpenAIResponseCompact              = types.EndpointTypeOpenAIResponseCompact
+	EndpointTypeOpenAIAlphaSearch                  = types.EndpointTypeOpenAIAlphaSearch
+	EndpointTypeDeepSeekToolsSearch                = types.EndpointTypeDeepSeekToolsSearch
+	EndpointTypeDeepSeekToolsFetch                 = types.EndpointTypeDeepSeekToolsFetch
+	EndpointTypeAnthropic                          = types.EndpointTypeAnthropic
+	EndpointTypeGemini                             = types.EndpointTypeGemini
+	EndpointTypeJinaRerank                         = types.EndpointTypeJinaRerank
+	EndpointTypeImageGeneration                    = types.EndpointTypeImageGeneration
+	EndpointTypeEmbeddings                         = types.EndpointTypeEmbeddings
+	EndpointTypeOpenAIVideo                        = types.EndpointTypeOpenAIVideo
+	EndpointTypeStudioASR             EndpointType = "studio-transcription-jobs"
 )
 
 // Model names the distributor assigns to /v1/tools/search and /v1/tools/fetch,

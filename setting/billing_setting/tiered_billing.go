@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -50,7 +51,7 @@ func init() {
 // ---------------------------------------------------------------------------
 
 func GetBillingMode(model string) string {
-	if model == "h3" {
+	if model == "h3" || model == constant.StudioASRModel {
 		return BillingModeTieredExpr
 	}
 	if mode, ok := billingSetting.BillingMode[model]; ok {

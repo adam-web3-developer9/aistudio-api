@@ -4,6 +4,9 @@ type TaskPlatform string
 
 const H3PricePerSecond = 0.10
 const H3BillingExpr = `tier("base", u("seconds") * 0.10)`
+const StudioASRModel = "qwen3-asr-0.6b"
+const StudioASRRoute = "/audio/transcription-jobs"
+const StudioASRJobsPath = "/v1/asr/jobs"
 
 const (
 	TaskPlatformSuno       TaskPlatform = "suno"
@@ -18,6 +21,7 @@ const (
 	TaskActionFirstTailToVideo = "first_tail_to_video"
 	TaskActionReferenceToVideo = "reference_to_video"
 	TaskActionRemix            = "remix"
+	TaskActionTranscription    = "transcription"
 )
 
 var legacyTaskActionAliases = map[string]string{

@@ -79,6 +79,10 @@ func VideoProxy(c *gin.Context) {
 		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Task not found")
 		return
 	}
+	if task.Platform == constant.TaskPlatformH3Studio && task.Properties.OriginModelName == constant.StudioASRModel {
+		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Task not found")
+		return
+	}
 	if task.Platform == constant.TaskPlatformH3Studio && !authorizeH3Task(c, task) {
 		return
 	}

@@ -130,10 +130,14 @@ func Distribute() func(c *gin.Context) {
 				return
 			}
 		}
-		if channel != nil && channel.Type == constant.ChannelTypeH3Studio &&
-			(c.Request.Method != http.MethodPost || (c.Request.URL.Path != "/v1/videos" && c.Request.URL.Path != "/v1/video/generations")) {
-			abortWithOpenAiMessage(c, http.StatusBadRequest, "H3 channels only accept video creation requests")
-			return
+		if channel != nil && channel.Type == constant.ChannelTypeH3Studio {
+			path := c.Request.URL.Path
+			video := modelRequest.Model == "h3" && (path == "/v1/videos" || path == "/v1/video/generations")
+			asr := modelRequest.Model == constant.StudioASRModel && path == "/v1"+constant.StudioASRRoute
+			if c.Request.Method != http.MethodPost || (!video && !asr) {
+				abortWithOpenAiMessage(c, http.StatusBadRequest, "Studio channel model does not support this endpoint")
+				return
+			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 		SetupContextForSelectedChannel(c, channel, modelRequest.Model)

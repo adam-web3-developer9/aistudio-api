@@ -73,11 +73,21 @@ func SyncH3Task(ctx context.Context, task *model.Task) error {
 	if err != nil {
 		return err
 	}
-	sanitizer, ok := adaptor.(interface{ SanitizeTaskData([]byte) ([]byte, error) })
-	if !ok {
-		return fmt.Errorf("H3 response sanitizer is missing")
+	isASR := task.Properties.OriginModelName == constant.StudioASRModel
+	var data []byte
+	if isASR {
+		sanitizer, ok := adaptor.(interface{ SanitizeASRTaskData([]byte) ([]byte, error) })
+		if !ok {
+			return fmt.Errorf("Studio speech recognition response sanitizer is missing")
+		}
+		data, err = sanitizer.SanitizeASRTaskData(body)
+	} else {
+		sanitizer, ok := adaptor.(interface{ SanitizeTaskData([]byte) ([]byte, error) })
+		if !ok {
+			return fmt.Errorf("H3 response sanitizer is missing")
+		}
+		data, err = sanitizer.SanitizeTaskData(body)
 	}
-	data, err := sanitizer.SanitizeTaskData(body)
 	if err != nil {
 		return err
 	}
@@ -95,7 +105,7 @@ func SyncH3Task(ctx context.Context, task *model.Task) error {
 			task.StartTime = time.Now().Unix()
 		}
 	case model.TaskStatusSuccess:
-		if result.Url == "" {
+		if !isASR && result.Url == "" {
 			return fmt.Errorf("H3 completed without an archived result")
 		}
 		task.PrivateData.ResultURL = result.Url
@@ -152,7 +162,13 @@ func SubmitH3Inputs(ctx context.Context, task *model.Task, body []byte) error {
 	}
 	boundedClient := *client
 	boundedClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-	lookup, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(h3.BaseURL, "/")+"/v1/jobs/by-request-key/"+url.PathEscape(task.TaskID), nil)
+	jobsPath := "/v1/jobs"
+	isASR := task.Properties.OriginModelName == constant.StudioASRModel
+	if isASR {
+		jobsPath = constant.StudioASRJobsPath
+	}
+	jobsURL := strings.TrimRight(h3.BaseURL, "/") + jobsPath
+	lookup, err := http.NewRequestWithContext(ctx, http.MethodGet, jobsURL+"/by-request-key/"+url.PathEscape(task.TaskID), nil)
 	if err != nil {
 		return err
 	}
@@ -171,7 +187,7 @@ func SubmitH3Inputs(ctx context.Context, task *model.Task, body []byte) error {
 	if err := common.DecodeJson(io.LimitReader(resp.Body, 2*1024*1024), &job); err != nil || job.ID == "" {
 		return fmt.Errorf("invalid H3 upload target response")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(h3.BaseURL, "/")+"/v1/jobs/"+url.PathEscape(job.ID)+"/inputs", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, jobsURL+"/"+url.PathEscape(job.ID)+"/inputs", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -194,6 +210,14 @@ func SubmitH3Inputs(ctx context.Context, task *model.Task, body []byte) error {
 			failure.Error.Code = failure.Code
 		}
 		if inputResp.StatusCode == http.StatusConflict || inputResp.StatusCode == http.StatusBadRequest {
+			if isASR {
+				code := "ASR_UPLOAD_UNAVAILABLE"
+				switch failure.Error.Code {
+				case "ASR_INPUTS_MISSING", "ASR_UPLOAD_NOT_READY":
+					code = failure.Error.Code
+				}
+				return &H3InputError{Status: inputResp.StatusCode, Code: code}
+			}
 			code := "COMFY_UPLOAD_UNAVAILABLE"
 			switch failure.Error.Code {
 			case "COMFY_UPLOAD_RESERVATION_STALE", "COMFY_UPLOAD_INVALID", "COMFY_UPLOAD_UNAVAILABLE":

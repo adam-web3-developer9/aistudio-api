@@ -12,6 +12,19 @@ func H3UsageSchema() map[string]jsplugin.UsageFieldSchema {
 	}
 }
 
+func StudioTaskUsageSchema(model string) map[string]jsplugin.UsageFieldSchema {
+	switch model {
+	case "h3":
+		return H3UsageSchema()
+	case constant.StudioASRModel:
+		return map[string]jsplugin.UsageFieldSchema{
+			"seconds": {Type: "number", Unit: "second", Description: jsplugin.LocalizedText{"en": "Audio duration", "zh": "音频时长"}},
+		}
+	default:
+		return nil
+	}
+}
+
 // deepSeekPeak is DeepSeek's peak window: Monday to Friday, 09:00-12:00 and
 // 14:00-18:00 Beijing time. The Chinese public holidays DeepSeek bills
 // off-peak are not known in advance and bill at peak here.

@@ -76,6 +76,8 @@ func SetRelayRouter(router *gin.Engine) {
 		// Responses WebSocket route. Channel selection happens after the first
 		// response.create event; each event runs the ordinary request limiter.
 		relayV1Router.GET("/responses", controller.ResponsesWebSocket)
+		relayV1Router.GET(constant.StudioASRRoute+"/:task_id", controller.RelayStudioASRFetch)
+		relayV1Router.POST(constant.StudioASRRoute+"/:task_id/inputs", controller.RelayStudioASRInputs)
 	}
 	relayV1Router.Use(middleware.ModelRequestRateLimit())
 	{
@@ -137,6 +139,7 @@ func SetRelayRouter(router *gin.Engine) {
 		})
 
 		// audio related routes
+		httpRouter.POST(constant.StudioASRRoute, controller.RelayStudioASR)
 		httpRouter.POST("/audio/transcriptions", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIAudio)
 		})

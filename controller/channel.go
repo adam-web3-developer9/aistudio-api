@@ -537,8 +537,8 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 			return common.NewMessage("H3 requires an HTTP(S) Studio base URL without credentials, query, or fragment")
 		}
 		for _, name := range channel.GetModels() {
-			if name != "h3" {
-				return common.NewMessage("H3 only supports model h3")
+			if name != "h3" && name != constant.StudioASRModel {
+				return common.NewMessage("Studio only supports models h3 and qwen3-asr-0.6b")
 			}
 		}
 	}

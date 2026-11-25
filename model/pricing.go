@@ -426,11 +426,11 @@ func updatePricing() {
 				})
 			}
 		}
-		if model == "h3" {
-			// H3 uses its configured task expression without text/group discounts.
+		if schema := billing_setting.StudioTaskUsageSchema(model); schema != nil {
+			// Studio uses its configured task expression without text/group discounts.
 			pricing.BillingMode = billing_setting.BillingModeTieredExpr
 			pricing.BillingExpr, _ = billing_setting.GetBillingExpr(model)
-			pricing.BillingUsageSchema = billing_setting.H3UsageSchema()
+			pricing.BillingUsageSchema = schema
 			pricing.FixedGroupPrice = true
 			pricing.BillingPluginVariants = nil
 		}

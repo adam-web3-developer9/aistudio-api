@@ -353,9 +353,14 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, task *model.Task, proxy str
 	boundedClient := *client
 	boundedClient.Timeout = 30 * time.Second
 	boundedClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-	endpoint := strings.TrimRight(baseURL, "/") + "/v1/jobs/" + url.PathEscape(id)
+	jobsPath := "/v1/jobs"
+	if task.Properties.OriginModelName == constant.StudioASRModel {
+		jobsPath = constant.StudioASRJobsPath
+	}
+	jobsURL := strings.TrimRight(baseURL, "/") + jobsPath
+	endpoint := jobsURL + "/" + url.PathEscape(id)
 	if strings.HasPrefix(id, "task_") {
-		endpoint = strings.TrimRight(baseURL, "/") + "/v1/jobs/by-request-key/" + url.PathEscape(id)
+		endpoint = jobsURL + "/by-request-key/" + url.PathEscape(id)
 	}
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -372,7 +377,7 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, task *model.Task, proxy str
 		if task.PrivateData.H3 == nil || len(task.PrivateData.H3.RequestBody) == 0 {
 			return nil, fmt.Errorf("persisted H3 request body is required for recovery")
 		}
-		req, err = http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/v1/jobs", bytes.NewReader(task.PrivateData.H3.RequestBody))
+		req, err = http.NewRequest(http.MethodPost, jobsURL, bytes.NewReader(task.PrivateData.H3.RequestBody))
 		if err != nil {
 			return nil, err
 		}
@@ -413,7 +418,10 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, task *model.Task, proxy str
 	return resp, nil
 }
 
-func (a *TaskAdaptor) ParseTaskResult(_ *model.Task, _ *http.Response, body []byte) (*relaycommon.TaskInfo, error) {
+func (a *TaskAdaptor) ParseTaskResult(task *model.Task, _ *http.Response, body []byte) (*relaycommon.TaskInfo, error) {
+	if task != nil && task.Properties.OriginModelName == constant.StudioASRModel {
+		return parseASRResult(task, body)
+	}
 	var job StudioJob
 	if err := common.Unmarshal(body, &job); err != nil || job.ID == "" || job.Status == "" {
 		return nil, fmt.Errorf("invalid H3 task response")
