@@ -186,6 +186,8 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		Prompt         string                     `json:"prompt"`
 		Seconds        json.RawMessage            `json:"seconds"`
 		Duration       json.RawMessage            `json:"duration"`
+		Resolution     string                     `json:"resolution"`
+		AspectRatio    string                     `json:"aspect_ratio"`
 		Size           string                     `json:"size"`
 		Image          string                     `json:"image"`
 		Images         []string                   `json:"images"`
@@ -237,24 +239,60 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		specifiedSeconds = value
 		seconds = value
 	}
-	width, height := 1344, 768
-	if req.Size != "" {
-		parts := strings.Split(req.Size, "x")
-		if len(parts) != 2 {
-			return invalid(fmt.Errorf("size must be WIDTHxHEIGHT"))
+	values := map[string]any{"prompt": req.Prompt, "duration": seconds}
+	legacySize := ""
+	if req.Resolution != "" || req.AspectRatio != "" {
+		if req.Size != "" {
+			return invalid(fmt.Errorf("H3 resolution and aspect_ratio cannot be combined with legacy size"))
 		}
-		var err error
-		width, err = strconv.Atoi(parts[0])
-		if err != nil {
-			return invalid(fmt.Errorf("size must be WIDTHxHEIGHT"))
+		resolution := strings.ToLower(strings.TrimSpace(req.Resolution))
+		if resolution == "" {
+			resolution = "768p"
 		}
-		height, err = strconv.Atoi(parts[1])
-		if err != nil {
-			return invalid(fmt.Errorf("size must be WIDTHxHEIGHT"))
+		resolution = strings.TrimPrefix(resolution, "short-")
+		switch resolution {
+		case "720p":
+			resolution = "768p"
+		case "480p", "768p", "1080p":
+		default:
+			return invalid(fmt.Errorf("H3 resolution must be 480p, 768p or 1080p"))
 		}
-	}
-	if width < 480 || width > 1920 || height < 480 || height > 1920 || width%32 != 0 || height%32 != 0 || width*height > 1920*1088 {
-		return invalid(fmt.Errorf("H3 dimensions must be multiples of 32 between 480 and 1920, with at most 2088960 pixels"))
+		aspectRatio := strings.TrimSpace(req.AspectRatio)
+		switch aspectRatio {
+		case "":
+			aspectRatio = "16:9"
+		case "16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3", "21:9":
+		default:
+			return invalid(fmt.Errorf("H3 aspect ratio is unsupported"))
+		}
+		if resolution == "1080p" && aspectRatio == "21:9" {
+			return invalid(fmt.Errorf("H3 1080p does not support the 21:9 aspect ratio"))
+		}
+		values["resolution"], values["aspectRatio"] = resolution, aspectRatio
+	} else {
+		// Keep the exact old submit body for legacy callers replaying an
+		// Idempotency-Key, including requests with an omitted size.
+		width, height := 1344, 768
+		if req.Size != "" {
+			parts := strings.Split(req.Size, "x")
+			if len(parts) != 2 {
+				return invalid(fmt.Errorf("size must be WIDTHxHEIGHT"))
+			}
+			var err error
+			width, err = strconv.Atoi(parts[0])
+			if err != nil {
+				return invalid(fmt.Errorf("size must be WIDTHxHEIGHT"))
+			}
+			height, err = strconv.Atoi(parts[1])
+			if err != nil {
+				return invalid(fmt.Errorf("size must be WIDTHxHEIGHT"))
+			}
+		}
+		if width < 480 || width > 1920 || height < 480 || height > 1920 || width%32 != 0 || height%32 != 0 || width*height > 1920*1088 {
+			return invalid(fmt.Errorf("H3 dimensions must be multiples of 32 between 480 and 1920, with at most 2088960 pixels"))
+		}
+		legacySize = fmt.Sprintf("%dx%d", width, height)
+		values["width"], values["height"] = width, height
 	}
 	directMedia := map[string]DirectMedia{}
 	for name, raw := range req.Metadata {
@@ -279,8 +317,8 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if len(directMedia) > 0 {
 		info.Action = constant.TaskActionReferenceToVideo
 	}
-	c.Set("task_request", relaycommon.TaskSubmitReq{Model: ModelName, Prompt: req.Prompt, Duration: seconds, Seconds: strconv.Itoa(seconds), Size: fmt.Sprintf("%dx%d", width, height)})
-	c.Set(requestContext, StudioRequest{AdapterID: "comfyui-v1", WorkflowID: WorkflowID, Values: map[string]any{"prompt": req.Prompt, "duration": seconds, "width": width, "height": height}, Media: map[string]string{}, Transport: "direct", DirectMedia: directMedia, ResultDelivery: "archive"})
+	c.Set("task_request", relaycommon.TaskSubmitReq{Model: ModelName, Prompt: req.Prompt, Duration: seconds, Seconds: strconv.Itoa(seconds), Size: legacySize})
+	c.Set(requestContext, StudioRequest{AdapterID: "comfyui-v1", WorkflowID: WorkflowID, Values: values, Media: map[string]string{}, Transport: "direct", DirectMedia: directMedia, ResultDelivery: "archive"})
 	return nil
 }
 
@@ -485,6 +523,16 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		if task.PrivateData.H3 != nil {
 			seconds = float64(task.PrivateData.H3.Seconds)
 			video.Size = task.PrivateData.H3.Size
+			var request struct {
+				Values struct {
+					Resolution  string `json:"resolution"`
+					AspectRatio string `json:"aspectRatio"`
+				} `json:"values"`
+			}
+			if common.Unmarshal(task.PrivateData.H3.RequestBody, &request) == nil && request.Values.Resolution != "" {
+				video.SetMetadata("resolution", request.Values.Resolution)
+				video.SetMetadata("aspect_ratio", request.Values.AspectRatio)
+			}
 		}
 		video.Seconds = strconv.FormatFloat(seconds, 'f', -1, 64)
 		video.SetMetadata("billing", map[string]any{"unit": "second", "requested_seconds": seconds, "price_per_second": task.PrivateData.BillingContext.ModelPrice, "currency": "USD"})

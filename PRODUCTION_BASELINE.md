@@ -45,8 +45,12 @@ this native H3 contract. Existing recharge and text/image pricing are unchanged.
 POST `/v1/videos` or `/v1/video/generations` with JSON:
 
 ```json
-{"model":"h3","prompt":"example","seconds":"5","size":"1344x768"}
+{"model":"h3","prompt":"example","seconds":"5","resolution":"768p","aspect_ratio":"16:9"}
 ```
+
+New H3 clients send a resolution tier (`480p`, `768p`, or `1080p`) and aspect
+ratio. Studio resolves the workflow's pixel dimensions. Legacy video requests
+and saved submissions retain their original size parameters.
 
 Send an `Idempotency-Key` to safely replay the same submission. Fetch
 `/v1/videos/:task_id`; upload media directly to its scoped GPU target and submit

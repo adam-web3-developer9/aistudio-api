@@ -705,8 +705,36 @@ func TestH3RequestWithoutReferencesSendsExplicitEmptyMedia(t *testing.T) {
 	assert.NotNil(t, request.Media)
 	assert.Empty(t, request.Media)
 	assert.Equal(t, float64(5), request.Values["duration"])
+	assert.Equal(t, float64(1344), request.Values["width"])
+	assert.Equal(t, float64(768), request.Values["height"])
 	assert.Equal(t, "direct", request.Transport)
 	assert.Equal(t, "archive", request.ResultDelivery)
+}
+
+func TestH3ResolutionPresetIsFrozenWithoutPixelDimensions(t *testing.T) {
+	c, info := h3RequestContextForTest(`{"model":"h3","prompt":"moving clouds","resolution":"short-720P","aspect_ratio":"9:16"}`)
+	adaptor := &h3studio.TaskAdaptor{}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	frozen, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var request h3studio.StudioRequest
+	require.NoError(t, common.Unmarshal(frozen, &request))
+	assert.Equal(t, map[string]any{"prompt": "moving clouds", "duration": float64(5), "resolution": "768p", "aspectRatio": "9:16"}, request.Values)
+	task := &model.Task{
+		PrivateData: model.TaskPrivateData{
+			H3:             &model.H3TaskContext{RequestBody: frozen, Seconds: 5},
+			BillingContext: &model.TaskBillingContext{},
+		},
+	}
+	encoded, err := adaptor.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+	var projection kitdto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(encoded, &projection))
+	assert.Empty(t, projection.Size)
+	assert.Equal(t, "768p", projection.Metadata["resolution"])
+	assert.Equal(t, "9:16", projection.Metadata["aspect_ratio"])
 }
 
 func TestH3InvalidChannelConfigurationDoesNotReserveOrDebit(t *testing.T) {
@@ -749,6 +777,10 @@ func TestH3RequestRejectsBillingBypassesAndUnsupportedMedia(t *testing.T) {
 		"oversized dimensions": `"size":"1920x1920"`,
 		"unaligned dimensions": `"size":"1280x720"`,
 		"invalid dimensions":   `"size":"a x b"`,
+		"invalid resolution":   `"resolution":"1344x768"`,
+		"invalid aspect ratio": `"resolution":"768p","aspect_ratio":"5:7"`,
+		"oversized preset":     `"resolution":"1080p","aspect_ratio":"21:9"`,
+		"mixed sizing":         `"resolution":"768p","size":"1344x768"`,
 		"image url":            `"image":"https://example.com/secret.png"`,
 		"invalid binding":      `"metadata":{"direct_media":{"image10":{"filename":"a.png","contentType":"image/png","sha256":"` + strings.Repeat("a", 64) + `"}}}`,
 		"wrong media type":     `"metadata":{"direct_media":{"image1":{"filename":"a.wav","contentType":"audio/wav","sha256":"` + strings.Repeat("a", 64) + `"}}}`,
